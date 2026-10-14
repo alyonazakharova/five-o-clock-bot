@@ -1,0 +1,21 @@
+# Build output
+/five-o-clock-bot
+/bin/
+*.exe
+*.test
+*.out
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Bot state (members, today's duty)
+/data/
+*.tmp
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

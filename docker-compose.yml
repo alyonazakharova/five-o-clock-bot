@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      STATE_PATH: /data/state.json
+      HTTP_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data

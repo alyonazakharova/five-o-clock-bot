@@ -1,0 +1,18 @@
+# Copy to /etc/systemd/system/, put the binary in /opt/five-o-clock-bot and the env file in /opt/five-o-clock-bot/.env
+[Unit]
+Description=Five o'clock tea duty Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/five-o-clock-bot
+EnvironmentFile=/opt/five-o-clock-bot/.env
+ExecStart=/opt/five-o-clock-bot/five-o-clock-bot
+Restart=always
+RestartSec=5
+DynamicUser=yes
+StateDirectory=five-o-clock-bot
+Environment=STATE_PATH=/var/lib/five-o-clock-bot/state.json
+
+[Install]
+WantedBy=multi-user.target
