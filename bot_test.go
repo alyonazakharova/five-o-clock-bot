@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -150,4 +153,73 @@ func equal(a, b []int64) bool {
 		}
 	}
 	return true
+}
+
+func TestFetchJoke(t *testing.T) {
+	cases := map[string]string{
+		`{"error":false,"type":"single","joke":"Tea & <biscuits>"}`:             "😄 Tea &amp; &lt;biscuits&gt;",
+		`{"error":false,"type":"twopart","setup":"Why?","delivery":"Because."}`: "😄 Why?\n\n<tg-spoiler>Because.</tg-spoiler>",
+	}
+	for body, want := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(body))
+		}))
+		jokeURL = srv.URL
+		got, err := fetchJoke(context.Background())
+		srv.Close()
+		if err != nil || got != want {
+			t.Errorf("fetchJoke(%s) = %q, %v; want %q", body, got, err, want)
+		}
+	}
+}
+
+func TestAddByUsername(t *testing.T) {
+	s, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.AddUsername("Alice") || s.AddUsername("alice") {
+		t.Fatal("first add should change, second (any case) should not")
+	}
+	pid := placeholderID("alice")
+	if m := s.Members[pid]; m == nil || !m.IsPlaceholder() {
+		t.Fatalf("placeholder missing: %+v", s.Members)
+	}
+	s.Duty = &Duty{UserID: pid, Absent: []int64{pid}}
+
+	// Seeing the real user replaces the placeholder, including in today's duty.
+	if !s.Upsert(User{ID: 42, Username: "alice", FirstName: "Alice"}) {
+		t.Fatal("upsert should change")
+	}
+	if _, ok := s.Members[pid]; ok || s.Members[42] == nil || len(s.Members) != 1 {
+		t.Fatalf("members = %+v", s.Members)
+	}
+	if s.Duty.UserID != 42 || s.Duty.Absent[0] != 42 {
+		t.Fatalf("duty not resolved: %+v", s.Duty)
+	}
+}
+
+func TestAddCommand(t *testing.T) {
+	s, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Upsert(User{ID: 1, Username: "bobby", FirstName: "Bob"})
+	b := &Bot{username: "FiveOClockBot", store: s}
+
+	got := b.addMembers(&Message{
+		Text:           "/add @carol, @bobby @x @FiveOClockBot",
+		ReplyToMessage: &Message{From: &User{ID: 7, FirstName: "Dan"}},
+		Entities:       []MessageEntity{{Type: "text_mention", User: &User{ID: 8, FirstName: "Eve"}}},
+	})
+	want := "✅ Added to the tea rotation: Dan, Eve, carol\n👌 Already in: bobby\n🤔 Can't add: x, FiveOClockBot"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	if len(s.Members) != 4 {
+		t.Errorf("members = %d, want 4", len(s.Members))
+	}
+	if got := b.addMembers(&Message{Text: "/add"}); !strings.HasPrefix(got, "Usage") {
+		t.Errorf("no args: %q", got)
+	}
 }

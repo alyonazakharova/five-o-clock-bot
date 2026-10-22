@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -79,12 +81,67 @@ func (s *Store) Upsert(u User) bool {
 	if u.IsBot {
 		return false
 	}
+	changed := false
+	if u.Username != "" {
+		changed = s.resolvePlaceholder(placeholderID(u.Username), u.ID)
+	}
 	next := Member{ID: u.ID, Username: u.Username, FirstName: u.FirstName, LastName: u.LastName}
 	if cur, ok := s.Members[u.ID]; ok && *cur == next {
-		return false
+		return changed
 	}
 	s.Members[u.ID] = &next
 	return true
+}
+
+// AddUsername adds someone known only by @username: the Bot API can't look up user ids,
+// so they get a placeholder id until the bot sees them. Reports whether anything changed.
+func (s *Store) AddUsername(username string) bool {
+	if s.FindUsername(username) != nil {
+		return false
+	}
+	id := placeholderID(username)
+	s.Members[id] = &Member{ID: id, Username: username}
+	return true
+}
+
+func (s *Store) FindUsername(username string) *Member {
+	for _, m := range s.Members {
+		if strings.EqualFold(m.Username, username) {
+			return m
+		}
+	}
+	return nil
+}
+
+// resolvePlaceholder swaps a placeholder member for the real user id everywhere it is used.
+func (s *Store) resolvePlaceholder(placeholder, id int64) bool {
+	if _, ok := s.Members[placeholder]; !ok {
+		return false
+	}
+	delete(s.Members, placeholder)
+	if d := s.Duty; d != nil {
+		if d.UserID == placeholder {
+			d.UserID = id
+		}
+		for i, a := range d.Absent {
+			if a == placeholder {
+				d.Absent[i] = id
+			}
+		}
+	}
+	return true
+}
+
+// placeholderID is a stable negative id for a username; real user ids are positive.
+func placeholderID(username string) int64 {
+	h := fnv.New64a()
+	h.Write([]byte(strings.ToLower(username)))
+	return -int64(h.Sum64()>>1) - 1
+}
+
+// IsPlaceholder reports whether the member was added by username and hasn't been seen yet.
+func (m *Member) IsPlaceholder() bool {
+	return m.ID < 0
 }
 
 func (s *Store) Remove(id int64) bool {

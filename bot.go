@@ -6,6 +6,7 @@ import (
 	"html"
 	"log"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -47,6 +48,8 @@ func (b *Bot) Run(ctx context.Context) error {
 	if err := b.api.SetMyCommands(ctx, []BotCommand{
 		{Command: "tea", Description: "Pick someone to make tea now"},
 		{Command: "members", Description: "Show who can be picked"},
+		{Command: "add", Description: "Add people: /add @username, or reply to their message"},
+		{Command: "joke", Description: "Tell a random joke"},
 		{Command: "chatid", Description: "Show this chat's id"},
 	}); err != nil {
 		log.Printf("setMyCommands: %v", err)
@@ -165,7 +168,74 @@ func (b *Bot) handleMessage(ctx context.Context, m *Message) {
 		b.pick(ctx)
 	case "members":
 		b.reply(ctx, m.Chat.ID, b.membersText())
+	case "add":
+		b.reply(ctx, m.Chat.ID, b.addMembers(m))
+	case "joke":
+		// Off the update loop: the joke API may be slow.
+		go b.tellJoke(ctx, m.Chat.ID)
 	}
+}
+
+var usernameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{3,31}$`)
+
+// addMembers handles /add: @usernames in the text, mentions of people without a username,
+// and the author of the replied-to message.
+func (b *Bot) addMembers(m *Message) string {
+	var added, already, invalid []string
+	addUser := func(u User) {
+		if u.IsBot {
+			invalid = append(invalid, html.EscapeString(u.FirstName))
+			return
+		}
+		_, known := b.store.Members[u.ID]
+		if b.store.Upsert(u) && !known {
+			added = append(added, html.EscapeString(plainName(b.store.Members[u.ID])))
+		} else {
+			already = append(already, html.EscapeString(plainName(b.store.Members[u.ID])))
+		}
+	}
+
+	if r := m.ReplyToMessage; r != nil && r.From != nil {
+		addUser(*r.From)
+	}
+	for _, e := range m.Entities {
+		if e.Type == "text_mention" && e.User != nil {
+			addUser(*e.User)
+		}
+	}
+	for _, word := range strings.Fields(m.Text)[1:] {
+		name, ok := strings.CutPrefix(word, "@")
+		if !ok {
+			continue
+		}
+		name = strings.TrimRight(name, ".,;:!?")
+		switch {
+		case !usernameRe.MatchString(name) || strings.EqualFold(name, b.username):
+			invalid = append(invalid, html.EscapeString(name))
+		case b.store.AddUsername(name):
+			added = append(added, html.EscapeString(name))
+		default:
+			already = append(already, html.EscapeString(name))
+		}
+	}
+
+	if len(added)+len(already)+len(invalid) == 0 {
+		return "Usage: <code>/add @username @another</code>, or reply to someone's message with /add."
+	}
+	if len(added)+len(already) > 0 {
+		b.save()
+	}
+	var lines []string
+	if len(added) > 0 {
+		lines = append(lines, "✅ Added to the tea rotation: "+strings.Join(added, ", "))
+	}
+	if len(already) > 0 {
+		lines = append(lines, "👌 Already in: "+strings.Join(already, ", "))
+	}
+	if len(invalid) > 0 {
+		lines = append(lines, "🤔 Can't add: "+strings.Join(invalid, ", "))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // command extracts "tea" from "/tea" or "/tea@ThisBot", ignoring commands addressed to other bots.
@@ -202,6 +272,11 @@ func (b *Bot) handleCallback(ctx context.Context, cq *CallbackQuery) {
 	if !known || cq.Message == nil || cq.Message.Chat.ID != b.cfg.ChatID {
 		b.answer(ctx, cq.ID, "", false)
 		return
+	}
+
+	// Pressing a button is also a way to be seen: it resolves someone added by @username.
+	if b.store.Upsert(cq.From) {
+		b.save()
 	}
 
 	duty := b.store.Duty
@@ -313,7 +388,9 @@ func (b *Bot) membersText() string {
 	for _, m := range b.store.Members {
 		// No @ so listing doesn't ping everyone.
 		name := html.EscapeString(displayName(m))
-		if m.Username != "" {
+		if m.IsPlaceholder() {
+			name += " (not seen yet)"
+		} else if m.Username != "" {
 			name += " (" + html.EscapeString(m.Username) + ")"
 		}
 		if b.cfg.IsExcluded(m) {
@@ -336,7 +413,7 @@ func (b *Bot) membersText() string {
 			sb.WriteString("• " + n + "\n")
 		}
 	}
-	sb.WriteString("\nMissing someone? They'll be added once they write anything in this chat.")
+	sb.WriteString("\nMissing someone? /add @username, or reply to their message with /add.")
 	return sb.String()
 }
 
@@ -399,7 +476,10 @@ func (b *Bot) removeKeyboard(ctx context.Context, messageID int) {
 }
 
 func displayName(m *Member) string {
-	return strings.TrimSpace(m.FirstName + " " + m.LastName)
+	if name := strings.TrimSpace(m.FirstName + " " + m.LastName); name != "" {
+		return name
+	}
+	return m.Username
 }
 
 // mentionHTML pings the member: @username when they have one, a tg:// link otherwise.

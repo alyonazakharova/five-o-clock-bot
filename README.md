@@ -14,6 +14,8 @@ Message texts live in [`messages.go`](messages.go); edit them freely.
 |------------|--------------------------------------------------|
 | `/tea`     | Pick someone right now (works on weekends too)   |
 | `/members` | Show who can be picked and who is excluded       |
+| `/add`     | Add people: `/add @alice @bob`, or reply to someone's message with `/add` |
+| `/joke`    | Tell a random (work-safe) joke from [JokeAPI](https://jokeapi.dev) |
 | `/chatid`  | Print the chat id (for setup)                    |
 
 ## Setup
@@ -31,10 +33,14 @@ bots download the member list, though, so the bot learns members as it sees them
 
 - group admins (fetched on start),
 - anyone who writes anything in the group,
-- people joining the group while the bot is in it.
+- people joining the group while the bot is in it,
+- people added with `/add`.
 
-Someone who has never written since the bot was added can't be picked yet — ask quiet
-people to send any message once. People who leave the group are removed.
+Quiet people can be added by anyone with `/add @username` (several at once is fine), or by
+replying to one of their messages with `/add` (this also works for people without a username).
+The Bot API can't look up a user by username, so someone added as `@username` shows as
+"not seen yet" in `/members` until they write or press a button; they can be picked meanwhile
+and are pinged by their @username. People who leave the group are removed.
 The same person isn't picked twice in a row within a day unless they're the only one left.
 
 ### Configuration (`.env`)
@@ -71,6 +77,7 @@ Send the token as `Authorization: Bearer <token>` or `?token=<token>`.
 
 - `status`: `idle` (nothing picked yet), `assigned` (waiting for tea), `ready` (tea is ready,
   `ready_at` is set), `nobody` (everyone was absent).
+- `id` is negative for someone added with `/add @username` whose Telegram id isn't known yet.
 - `assignment_id` goes up every time a new person is picked — compare it to spot a new assignee.
 - `version` goes up on every change (new pick, absent, tea ready).
 

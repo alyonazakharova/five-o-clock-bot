@@ -32,6 +32,14 @@ type Message struct {
 	Text           string `json:"text,omitempty"`
 	NewChatMembers []User `json:"new_chat_members,omitempty"`
 	LeftChatMember *User  `json:"left_chat_member,omitempty"`
+
+	ReplyToMessage *Message        `json:"reply_to_message,omitempty"`
+	Entities       []MessageEntity `json:"entities,omitempty"`
+}
+
+type MessageEntity struct {
+	Type string `json:"type"`
+	User *User  `json:"user,omitempty"` // set for "text_mention" (people without a username)
 }
 
 type CallbackQuery struct {
